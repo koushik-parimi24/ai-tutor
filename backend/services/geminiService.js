@@ -9,11 +9,7 @@ const MAX_RETRIES = 3;
 const TIMEOUT = 30000; // 30 seconds
 
 // Initialize Gemini AI with correct configuration
-const genAI = process.env.GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY, {
-  apiVersion: "v1",
-  timeout: TIMEOUT,
-  retry: MAX_RETRIES,
-}) : null;
+const genAI = process.env.GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) : null;
 
 // Log API initialization
 if (genAI) {
@@ -23,9 +19,24 @@ if (genAI) {
 }
 
 /**
- * Generate diagram using Gemini AI
+ * Helper function to extract JSON from a string, removing markdown fences.
+ */
+function extractJson(text) {
+  const match = text.match(/```json\s*([\s\S]*?)\s*```|({[\s\S]*})|(\[[\s\S]*\])/);
+  if (match) {
+    // Return the first non-null capturing group
+    return match[1] || match[2] || match[3];
+  }
+  return text; // Fallback to the original text if no JSON is found
+}
+
+
+/**
+ * Generate visual diagram using Gemini AI
  */
 async function generateVisualDiagram(content, type = 'flowchart', outputPath = 'public/generated') {
+  // This function contains a conceptual correction for image generation.
+  // The user should replace "imagen-2" with their actual available image generation model.
   try {
     if (!genAI) {
       throw new Error('Gemini API key not configured for image generation');
@@ -34,7 +45,7 @@ async function generateVisualDiagram(content, type = 'flowchart', outputPath = '
     console.log('🎨 Attempting to generate visual diagram with Gemini Imagen...');
 
     const model = genAI.getGenerativeModel({
-      model: "gemini-2.0-flash-preview-image-generation",
+      model: "imagen-2", 
     });
 
     let prompt = '';
@@ -63,17 +74,15 @@ async function generateVisualDiagram(content, type = 'flowchart', outputPath = '
         prompt = `Create a clear and visually appealing diagram for: ${content}`;
     }
 
-    // Correct Gemini Image API usage
-    const result = await model.generateImage({
-      prompt,
-      size: "1024x1024"
-    });
+    const result = await model.generateContent([prompt]);
+    const response = await result.response;
+    const imageData = response.parts.find(part => part.inlineData)?.inlineData;
 
-    if (!result?.data?.[0]?.b64_json) {
+    if (!imageData || !imageData.data) {
       throw new Error('No image returned from Gemini');
     }
 
-    const imageBuffer = Buffer.from(result.data[0].b64_json, 'base64');
+    const imageBuffer = Buffer.from(imageData.data, 'base64');
     const timestamp = Date.now();
     const filename = `${type}-${timestamp}.png`;
     const filepath = `${outputPath}/${filename}`;
@@ -81,7 +90,6 @@ async function generateVisualDiagram(content, type = 'flowchart', outputPath = '
     await fs.mkdir(outputPath, { recursive: true });
     await fs.writeFile(filepath, imageBuffer);
 
-    // Save to frontend public folder
     const frontendPath = process.env.FRONTEND_PATH || '../public';
     await fs.mkdir(`${frontendPath}/generated`, { recursive: true });
     await fs.writeFile(`${frontendPath}/generated/${filename}`, imageBuffer);
@@ -96,16 +104,12 @@ async function generateVisualDiagram(content, type = 'flowchart', outputPath = '
 
   } catch (error) {
     console.warn('⚠️ Gemini Imagen failed:', error.message);
-
-    // Fallback to OpenAI image generation
     try {
       console.log('🔄 Falling back to OpenAI DALL·E...');
       return await openaiService.generateVisualDiagram(content, type, outputPath);
     } catch (openaiError) {
       console.warn('⚠️ OpenAI fallback failed:', openaiError.message);
     }
-
-    // Fallback to text-based diagram
     return await generateDiagram(content, type);
   }
 }
@@ -113,13 +117,12 @@ async function generateVisualDiagram(content, type = 'flowchart', outputPath = '
 
 async function generateDiagram(content, type = 'flowchart') {
   try {
-    // First try with Gemini
     if (!genAI) {
       console.warn('⚠️  Attempting to use OpenAI as fallback...');
       return await openaiService.generateDiagram(content, type);
     }
     console.log('🎯 Attempting to generate diagram with Gemini AI...');
-    const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
     
     console.log('📝 Sending prompt for Mermaid diagram...');
     const prompt = `Create a Mermaid.js ${type} diagram for the following content. 
@@ -145,7 +148,6 @@ async function generateDiagram(content, type = 'flowchart') {
   } catch (error) {
     console.warn('⚠️  Gemini diagram generation failed:', error.message);
     
-    // Try OpenAI as first fallback
     try {
       console.log('🔄 Attempting to use OpenAI as fallback...');
       const openaiResult = await openaiService.generateDiagram(content, type);
@@ -154,7 +156,6 @@ async function generateDiagram(content, type = 'flowchart') {
       console.warn('⚠️  OpenAI fallback failed:', openaiError.message);
     }
 
-    // Try Claude as second fallback
     try {
       console.log('🔄 Attempting to use Claude as fallback...');
       const claudeResult = await require('./claudeService').generateDiagram(content, type);
@@ -184,7 +185,7 @@ async function generateRoadmap(content, duration = '6 weeks') {
       };
     }
 
-    const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
     
     const prompt = `Create a learning roadmap for ${duration} based on this content.
     Return a JSON object with this exact structure:
@@ -206,13 +207,14 @@ async function generateRoadmap(content, duration = '6 weeks') {
 
     const result = await model.generateContent(prompt);
     const response = await result.response;
-    const roadmapText = response.text().trim();
+    const rawText = response.text();
+    const jsonText = extractJson(rawText);
     
-    // Try to parse JSON response
     let roadmap;
     try {
-      roadmap = JSON.parse(roadmapText);
+      roadmap = JSON.parse(jsonText);
     } catch (parseError) {
+      console.error('Failed to parse JSON from Gemini:', jsonText);
       throw new Error('Invalid JSON response from Gemini');
     }
 
@@ -225,7 +227,6 @@ async function generateRoadmap(content, duration = '6 weeks') {
   } catch (error) {
     console.warn('⚠️  Gemini roadmap generation failed:', error.message);
     
-    // Try OpenAI as first fallback
     try {
       console.log('🔄 Attempting to use OpenAI as fallback...');
       const openaiResult = await openaiService.generateRoadmap(content);
@@ -234,7 +235,6 @@ async function generateRoadmap(content, duration = '6 weeks') {
       console.warn('⚠️  OpenAI fallback failed:', openaiError.message);
     }
 
-    // Try Claude as second fallback
     try {
       console.log('🔄 Attempting to use Claude as fallback...');
       const claudeResult = await require('./claudeService').generateRoadmap(content);
@@ -264,7 +264,7 @@ async function generateResources(content, count = 8) {
       };
     }
 
-    const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
     
     const prompt = `Generate ${count} educational resources for learning about this content.
     Return a JSON array with this exact structure:
@@ -288,13 +288,14 @@ async function generateResources(content, count = 8) {
 
     const result = await model.generateContent(prompt);
     const response = await result.response;
-    const resourcesText = response.text().trim();
+    const rawText = response.text();
+    const jsonText = extractJson(rawText);
     
-    // Try to parse JSON response
     let resources;
     try {
-      resources = JSON.parse(resourcesText);
+      resources = JSON.parse(jsonText);
     } catch (parseError) {
+      console.error('Failed to parse JSON from Gemini:', jsonText);
       throw new Error('Invalid JSON response from Gemini');
     }
 
@@ -307,7 +308,6 @@ async function generateResources(content, count = 8) {
   } catch (error) {
     console.warn('⚠️  Gemini resources generation failed:', error.message);
     
-    // Try OpenAI as first fallback
     try {
       console.log('🔄 Attempting to use OpenAI as fallback...');
       const openaiResult = await openaiService.generateResources(content, count);
@@ -316,7 +316,6 @@ async function generateResources(content, count = 8) {
       console.warn('⚠️  OpenAI fallback failed:', openaiError.message);
     }
 
-    // Try Claude as second fallback
     try {
       console.log('🔄 Attempting to use Claude as fallback...');
       const claudeResult = await require('./claudeService').generateResources(content, count);
@@ -346,7 +345,7 @@ async function sendChatMessage(message, context = '') {
       };
     }
 
-    const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
     
     const prompt = `You are an AI tutor. Help the student with their question.
     
@@ -376,29 +375,29 @@ async function sendChatMessage(message, context = '') {
 }
 
 /**
- * Generate text embeddings (fallback to mock for now)
+ * Generate text embeddings using Gemini AI
  */
 async function generateEmbedding(text) {
   try {
-    // Note: Gemini doesn't have a direct embedding API like OpenAI
-    // For now, we'll use mock embeddings
-    console.warn('⚠️  Using mock embeddings (Gemini doesn\'t support embeddings yet)');
+    if (!genAI) {
+      throw new Error('Gemini API key not configured for embeddings');
+    }
     
-    // Generate a simple hash-based mock embedding
-    const embedding = Array.from({ length: 1536 }, (_, i) => 
-      Math.sin(text.charCodeAt(i % text.length) + i) * 0.1
-    );
+    const model = genAI.getGenerativeModel({ model: "embedding-001" });
+
+    const result = await model.embedContent(text);
+    const embedding = result.embedding.values;
     
     return {
       embedding,
       success: true,
-      isMock: true
+      isMock: false
     };
 
   } catch (error) {
     console.warn('⚠️  Embedding generation failed:', error.message);
     return {
-      embedding: Array(1536).fill(0),
+      embedding: Array(768).fill(0),
       success: false,
       error: error.message
     };
@@ -410,5 +409,6 @@ module.exports = {
   generateVisualDiagram,
   generateRoadmap,
   generateResources,
-  sendChatMessage
+  sendChatMessage,
+  generateEmbedding
 };

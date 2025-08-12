@@ -60,7 +60,7 @@ module.exports = {
   generateResources: aiService.generateResources,
   sendChatMessage: aiService.sendChatMessage,
   generateEmbedding: aiService.generateEmbedding,
-  
+  generateSummary: aiService.generateSummary, 
   // Also export the provider info
   getCurrentProvider: () => AI_PROVIDER,
   getAvailableProviders: () => ['openai', 'gemini', 'mock']

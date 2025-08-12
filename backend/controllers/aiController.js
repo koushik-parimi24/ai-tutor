@@ -1,17 +1,17 @@
-const { 
+const {
   generateDiagram,
-  generateVisualDiagram, 
-  generateRoadmap, 
-  generateResources, 
+  generateVisualDiagram,
+  generateRoadmap,
+  generateResources,
   sendChatMessage: generateChatResponse,
-  getCurrentProvider 
+  generateSummary
 } = require('../services/aiService');
 const { searchSimilar, getChatHistory, storeChatMessage } = require('../services/supabaseService');
-const { 
-  createSuccessResponse, 
-  createErrorResponse, 
+const {
+  createSuccessResponse,
+  createErrorResponse,
   validateRequestBody,
-  generateSessionId 
+  generateSessionId
 } = require('../utils/helpers');
 
 /**
@@ -29,12 +29,12 @@ const createDiagram = async (req, res) => {
     const { content, type = 'flowchart' } = req.body;
 
     console.log('🧠 Generating diagram...');
-    
+
     // Try visual diagram generation first
     try {
       console.log('🎨 Attempting visual diagram generation...');
       const visualResult = await generateVisualDiagram(content, type);
-      
+
       if (visualResult.success) {
         console.log('✨ Visual diagram generated successfully');
         return res.status(200).json(
@@ -54,7 +54,6 @@ const createDiagram = async (req, res) => {
     const result = await generateDiagram(content, type);
 
     if (!result.success && result.fallback) {
-      // Use fallback data when both visual and text generation fails
       console.warn('Using fallback diagram data');
       const responseData = {
         diagram: result.fallback.diagram,
@@ -63,7 +62,6 @@ const createDiagram = async (req, res) => {
         isFallback: true,
         note: 'Generated using fallback data - both visual and text generation failed'
       };
-
       return res.status(200).json(
         createSuccessResponse(responseData, 'Diagram generated using fallback data')
       );
@@ -86,11 +84,49 @@ const createDiagram = async (req, res) => {
     res.status(200).json(
       createSuccessResponse(responseData, 'Diagram generated successfully')
     );
-
   } catch (error) {
     console.error('Diagram generation error:', error);
     res.status(500).json(
       createErrorResponse('Internal server error during diagram generation', 500)
+    );
+  }
+};
+
+/**
+ * Generate a summary from content
+ */
+const createSummary = async (req, res) => {
+  try {
+    const validation = validateRequestBody(req.body, ['content']);
+    if (!validation.isValid) {
+      return res.status(400).json(
+        createErrorResponse(`Validation failed: ${validation.errors.join(', ')}`, 400)
+      );
+    }
+
+    const { content } = req.body;
+
+    console.log('📝 Generating summary...');
+    const result = await generateSummary(content);
+
+    if (!result.success) {
+      return res.status(500).json(
+        createErrorResponse('Failed to generate summary', 500, result.error)
+      );
+    }
+
+    const responseData = {
+      summary: result.summary,
+      generatedAt: new Date().toISOString(),
+    };
+
+    res.status(200).json(
+      createSuccessResponse(responseData, 'Summary generated successfully')
+    );
+  } catch (error) {
+    console.error('Summary generation error:', error);
+    res.status(500).json(
+      createErrorResponse('Internal server error during summary generation', 500)
     );
   }
 };
@@ -113,7 +149,6 @@ const createRoadmap = async (req, res) => {
     const result = await generateRoadmap(content, duration);
 
     if (!result.success && result.fallback) {
-      // Use fallback data when primary generation fails
       console.warn('Using fallback roadmap data');
       const responseData = {
         roadmap: result.fallback.roadmap,
@@ -122,7 +157,6 @@ const createRoadmap = async (req, res) => {
         isFallback: true,
         note: 'Generated using fallback data due to AI service limitations'
       };
-
       return res.status(200).json(
         createSuccessResponse(responseData, 'Roadmap generated using fallback data')
       );
@@ -145,7 +179,6 @@ const createRoadmap = async (req, res) => {
     res.status(200).json(
       createSuccessResponse(responseData, 'Roadmap generated successfully')
     );
-
   } catch (error) {
     console.error('Roadmap generation error:', error);
     res.status(500).json(
@@ -172,7 +205,6 @@ const createResources = async (req, res) => {
     const result = await generateResources(content, count);
 
     if (!result.success && result.fallback) {
-      // Use fallback data when primary generation fails
       console.warn('Using fallback resources data');
       const responseData = {
         resources: result.fallback.resources,
@@ -181,7 +213,6 @@ const createResources = async (req, res) => {
         isFallback: true,
         note: 'Generated using fallback data due to AI service limitations'
       };
-
       return res.status(200).json(
         createSuccessResponse(responseData, 'Resources generated using fallback data')
       );
@@ -204,7 +235,6 @@ const createResources = async (req, res) => {
     res.status(200).json(
       createSuccessResponse(responseData, 'Resources generated successfully')
     );
-
   } catch (error) {
     console.error('Resources generation error:', error);
     res.status(500).json(
@@ -225,16 +255,15 @@ const handleChat = async (req, res) => {
       );
     }
 
-    const { 
-      message, 
-      sessionId = generateSessionId(), 
+    const {
+      message,
+      sessionId = generateSessionId(),
       fileId = null,
-      includeHistory = true 
+      includeHistory = true
     } = req.body;
 
     console.log(`💬 Processing chat message for session: ${sessionId}`);
 
-    // Get conversation history if requested
     let history = [];
     if (includeHistory) {
       const historyResult = await getChatHistory(sessionId, 5);
@@ -243,14 +272,8 @@ const handleChat = async (req, res) => {
       }
     }
 
-    // Search for relevant context from uploaded files
     let context = '';
     if (fileId) {
-      // In a real implementation, you would:
-      // 1. Generate embedding for the user's message
-      // 2. Search for similar embeddings in the vector store
-      // 3. Use the retrieved context
-      
       const searchResult = await searchSimilar(null, fileId, 3);
       if (searchResult.success && searchResult.results.length > 0) {
         context = searchResult.results
@@ -259,7 +282,6 @@ const handleChat = async (req, res) => {
       }
     }
 
-    // Generate AI response
     const aiResult = await generateChatResponse(message, context, history);
 
     if (!aiResult.success) {
@@ -273,7 +295,6 @@ const handleChat = async (req, res) => {
 
     const aiResponse = aiResult.message || aiResult.fallback?.message;
 
-    // Store the conversation
     await storeChatMessage(sessionId, message, aiResponse, fileId);
 
     const responseData = {
@@ -289,7 +310,6 @@ const handleChat = async (req, res) => {
     res.status(200).json(
       createSuccessResponse(responseData, 'Chat response generated successfully')
     );
-
   } catch (error) {
     console.error('Chat error:', error);
     res.status(500).json(
@@ -330,7 +350,6 @@ const getChatHistoryEndpoint = async (req, res) => {
     res.status(200).json(
       createSuccessResponse(responseData, 'Chat history retrieved successfully')
     );
-
   } catch (error) {
     console.error('Chat history error:', error);
     res.status(500).json(
@@ -364,10 +383,11 @@ const healthCheck = (req, res) => {
     },
     endpoints: [
       'POST /api/ai/diagram',
-      'POST /api/ai/roadmap', 
+      'POST /api/ai/roadmap',
       'POST /api/ai/resources',
       'POST /api/ai/chat',
-      'GET /api/ai/chat/:sessionId'
+      'GET /api/ai/chat/:sessionId',
+      'POST /api/ai/summary'
     ],
     timestamp: new Date().toISOString()
   });
@@ -379,5 +399,6 @@ module.exports = {
   createResources,
   handleChat,
   getChatHistoryEndpoint,
-  healthCheck
+  healthCheck,
+  createSummary
 };

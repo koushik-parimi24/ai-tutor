@@ -5,5 +5,6 @@ export const API_ENDPOINTS = {
   diagram: '/api/ai/diagram',
   roadmap: '/api/ai/roadmap',
   chat: '/api/ai/chat',
-  resources: '/api/ai/resources'
+  resources: '/api/ai/resources',
+   summary: '/api/ai/summary'
 }
